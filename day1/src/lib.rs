@@ -8,18 +8,15 @@ pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
     let mut counts: Vec<i64> = Vec::new();
     let mut calories: i64 = 0;
 
-    loop {
-        if let Some(item) = component_lines.next() {
-            if let Ok(calorie) = item.parse::<i64>() {
-                calories = calories + calorie;
-            }
-            if item.is_empty() {
-                counts.push(calories);
-                calories = 0;
-            }
-            continue;
+    while let Some(item) = component_lines.next() {
+        if let Ok(calorie) = item.parse::<i64>() {
+            calories = calories + calorie;
         }
-        break;
+        if item.is_empty() {
+            counts.push(calories);
+            calories = 0;
+        }
+        continue;
     }
 
     // sort the counts vector
