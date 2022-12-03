@@ -10,7 +10,7 @@ fn main() {
 
     let filename_in: String = args[1].clone();
 
-    if let Err(e) = day1::run(filename_in) {
+    if let Err(e) = day1::run_iter(filename_in) {
         eprintln!("Application error: {}", e);
         process::exit(1);
     }
