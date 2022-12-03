@@ -56,7 +56,6 @@ pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
             counts.push(calories);
             calories = 0;
         }
-        continue;
     }
 
     // sort the counts vector
