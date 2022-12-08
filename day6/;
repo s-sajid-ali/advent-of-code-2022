@@ -1,0 +1,73 @@
+use fs_err as fs;
+use itertools::Itertools;
+use std::collections::VecDeque;
+use std::error::Error;
+
+fn check(buffer: &VecDeque<char>) -> bool {
+    // check that we are given only 4 chars
+    assert_eq!(buffer.len(), 4);
+
+    let cmp_vec: Vec<u32> = (0..4)
+        .cartesian_product(0..4)
+        .map(|(i, j)| {
+            if i != j && buffer[i] == buffer[j] {
+                1
+            } else {
+                0
+            }
+        })
+        .collect();
+
+    if cmp_vec.iter().sum::<u32>() == 0 {
+        return true;
+    }
+
+    println!("{},{},{},{}", buffer[0], buffer[1], buffer[2], buffer[3]);
+    dbg!(cmp_vec);
+
+    false
+}
+
+pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
+    let contents = fs::read_to_string(filename)?;
+    let component_lines = contents.lines();
+
+    for line in component_lines {
+        if line.is_empty() {
+            break;
+        } else {
+            let mut buf: VecDeque<char> = VecDeque::with_capacity(4);
+            println!("input has {} chars", input.chars().count());
+            let mut input = line.chars().enumerate();
+            // fill the first 4 input characters
+            for _ in 0..4 {
+                let (_, elem) = input.next().expect("need at least 4 characters!");
+                buf.push_back(elem);
+            }
+            // check if first 4 chars are same
+            if check(&buf) == true {
+                println!("start of packet marker is at 4");
+            }
+
+            loop {
+                match input.next() {
+                    Some((idx, elem)) => {
+                        buf.pop_front();
+                        buf.push_back(elem);
+                        if check(&buf) == true {
+                            println!("start of packet marker is at {}", idx);
+                            break;
+                        }
+                        continue;
+                    }
+                    None => {
+                        println!("No start of packet marker found!");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
