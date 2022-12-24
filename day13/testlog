@@ -1,0 +1,153 @@
+   Compiling day13 v0.1.0 (/Users/sasyed/Documents/packages/advent-of-code-2022/day13)
+warning: variants `RightSideRanOutItems` and `LeftSideIsSmaller` are never constructed
+  --> src/lib.rs:9:5
+   |
+8  | enum Correct {
+   |      ------- variants in this enum
+9  |     RightSideRanOutItems,
+   |     ^^^^^^^^^^^^^^^^^^^^
+10 |     LeftSideIsSmaller,
+   |     ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+   = note: `Correct` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variant `RightSideIsSmaller` is never constructed
+  --> src/lib.rs:16:5
+   |
+14 | enum Incorrect {
+   |      --------- variant in this enum
+15 |     LeftSideRanOutItems,
+16 |     RightSideIsSmaller,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `Incorrect` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: variant `Correct` is never constructed
+  --> src/lib.rs:21:5
+   |
+20 | enum Order {
+   |      ----- variant in this enum
+21 |     Correct(Correct),
+   |     ^^^^^^^
+   |
+   = note: `Order` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `day13` (lib) generated 3 warnings
+    Finished dev [unoptimized + debuginfo] target(s) in 0.39s
+     Running `target/debug/day13 test.txt`
+--------------------------------
+processing pair_id: 1
+left packer is 1,1,3,1,1
+right packet is 1,1,5,1,1
+left elems are:
+[src/lib.rs:93] left_elems = {
+    4: "1",
+    0: "1",
+    2: "3",
+    1: "1",
+    3: "1",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    4: "1",
+    3: "1",
+    0: "1",
+    1: "1",
+    2: "5",
+}
+--------------------------------
+processing pair_id: 2
+left packer is [1],[2,3,4]
+right packet is [1],4
+left elems are:
+[src/lib.rs:93] left_elems = {
+    0: "[1]",
+    1: "[2,3,4]",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    0: "[1]",
+    1: "4",
+}
+--------------------------------
+processing pair_id: 3
+left packer is 9
+right packet is 8,7,6
+left elems are:
+[src/lib.rs:93] left_elems = {
+    0: "9",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    0: "8",
+    2: "6",
+    1: "7",
+}
+--------------------------------
+processing pair_id: 4
+left packer is [4,4],4,4
+right packet is [4,4],4,4,4
+left elems are:
+[src/lib.rs:93] left_elems = {
+    1: "4",
+    2: "4",
+    0: "[4,4]",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    2: "4",
+    1: "4",
+    0: "[4,4]",
+    3: "4",
+}
+--------------------------------
+processing pair_id: 5
+left packer is 7,7,7,7
+right packet is 7,7,7
+left elems are:
+[src/lib.rs:93] left_elems = {
+    1: "7",
+    2: "7",
+    0: "7",
+    3: "7",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    0: "7",
+    2: "7",
+    1: "7",
+}
+--------------------------------
+processing pair_id: 6
+left packer is 
+right packet is 3
+left elems are:
+[src/lib.rs:93] left_elems = {
+    0: "",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    0: "3",
+}
+--------------------------------
+processing pair_id: 7
+pair-id: 7; conclusion-reached: true, Incorrect(LeftSideRanOutItems)
+--------------------------------
+processing pair_id: 8
+left packer is 1,[2,[3,[4,[5,6,7]]]],8,9
+right packet is 1,[2,[3,[4,[5,6,0]]]],8,9
+left elems are:
+[src/lib.rs:93] left_elems = {
+    1: "[2,[3,[4,[5,6,7]]]]",
+    3: "9",
+    2: "8",
+    0: "1",
+}
+right elems are:
+[src/lib.rs:96] right_elems = {
+    1: "[2,[3,[4,[5,6,0]]]]",
+    3: "9",
+    0: "1",
+    2: "8",
+}
