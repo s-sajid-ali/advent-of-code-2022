@@ -1,126 +1,157 @@
 use fs_err as fs;
+use id_tree::*;
 use std::error::Error;
 
 mod packet;
-use crate::packet::parse::{get_outer_elements, trim_packet};
+use crate::packet::parse::parse_tree;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Correct {
-    RightSideRanOutItems,
+    LeftSideRanOutItems,
     LeftSideIsSmaller,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Incorrect {
-    LeftSideRanOutItems,
+    RightSideRanOutItems,
     RightSideIsSmaller,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub enum Order {
     Correct(Correct),
     Incorrect(Incorrect),
 }
 
-pub fn trim_test(left_packet: &mut String, right_packet: &mut String) -> Option<Order> {
-    // trim the outermost braces first!
-    loop {
-        let left = trim_packet(&left_packet);
-        let right = trim_packet(&right_packet);
+pub fn test(left_tree: Tree<i32>, right_tree: Tree<i32>) -> Order {
+    let left_root = left_tree
+        .root_node_id()
+        .expect("left packet tree has no root!");
+    let right_root = right_tree
+        .root_node_id()
+        .expect("right packet tree has no root!");
 
-        match (left, right) {
-            (Some(leftval), Some(rightval)) => {
-                left_packet.clone_from(&(leftval));
-                right_packet.clone_from(&(rightval));
-                continue;
+    let mut left_iter = left_tree.traverse_pre_order(&left_root).unwrap();
+    let mut right_iter = right_tree.traverse_pre_order(&right_root).unwrap();
+
+    loop {
+        let left_elem = left_iter.next();
+        let right_elem = right_iter.next();
+
+        match (left_elem, right_elem) {
+            (Some(left_node), Some(right_node)) => {
+                let left_val = *left_node.data();
+                let right_val = *right_node.data();
+
+                if left_val == -3 && right_val == -3 {
+                    // at root nodes, skip this comparision
+                    continue;
+                }
+
+                let left_parent_is_root =
+                    *left_tree.get(&left_node.parent().unwrap()).unwrap().data() == -2;
+                let right_parent_is_root = *right_tree
+                    .get(&right_node.parent().unwrap())
+                    .unwrap()
+                    .data()
+                    == -2;
+                println!(
+                    "comparing pair : {}/{}, parents are roots: {}/{}",
+                    left_val, right_val, left_parent_is_root, right_parent_is_root
+                );
+
+                match (left_parent_is_root, right_parent_is_root) {
+                    (true, false) => {
+                        return Order::Correct(Correct::LeftSideRanOutItems);
+                    }
+                    (false, true) => {
+                        return Order::Incorrect(Incorrect::RightSideRanOutItems);
+                    }
+                    _ => {
+                        if left_val == -1 && right_val != -1 {
+                            return Order::Correct(Correct::LeftSideRanOutItems);
+                        }
+                        if left_val != -1 && right_val == -1 {
+                            return Order::Incorrect(Incorrect::RightSideRanOutItems);
+                        }
+                        if left_val < right_val {
+                            return Order::Correct(Correct::LeftSideIsSmaller);
+                        }
+
+                        if left_val > right_val {
+                            return Order::Incorrect(Incorrect::RightSideIsSmaller);
+                        }
+                    }
+                }
             }
+
             (Some(_), None) => {
-                return Some(Order::Incorrect(Incorrect::LeftSideRanOutItems));
+                return Order::Incorrect(Incorrect::RightSideRanOutItems);
             }
-            (None, Some(rightval)) => {
-                right_packet.clone_from(&(rightval));
-                continue;
+
+            (None, Some(_)) => {
+                return Order::Correct(Correct::LeftSideRanOutItems);
             }
+
             (None, None) => {
-                break;
+                return Order::Correct(Correct::LeftSideIsSmaller);
             }
         }
     }
-    None
 }
 
 pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(filename)?;
     let component_lines = contents.lines().collect::<Vec<_>>();
-    let mut pair_id: usize = 0;
-    let mut right_pair_ids: Vec<usize> = Vec::new();
+    let right_pair_ids: usize = component_lines
+        .chunks(3)
+        .enumerate()
+        .filter_map(|(pair_id, chunk)| {
+            println!("--------------------------------");
+            println!("processing pair_id: {}", pair_id + 1);
 
-    for chunk in component_lines.chunks(3) {
-        pair_id += 1;
-        println!("--------------------------------");
-        println!("processing pair_id: {}", pair_id);
-
-        if chunk.len() == 2 || chunk.len() == 3 {
-            let mut left_packet: String = chunk.get(0).expect("no packet on left!").to_string();
-            let mut right_packet: String = chunk.get(1).expect("no packet on right!").to_string();
-
-            let check = trim_test(&mut left_packet, &mut right_packet);
-
-            if check.is_some() {
-                // check for early conclusion
-                println!(
-                    "pair-id: {}; conclusion-reached: {:?}",
-                    pair_id,
-                    check.unwrap()
-                );
-                continue;
+            if !(chunk.len() == 2 || chunk.len() == 3) {
+                eprintln!("packets must occur in pairs");
+                return None::<usize>;
             }
-            println!("left packer is {}", left_packet);
-            println!("right packet is {}", right_packet);
 
-            let left_elems = get_outer_elements(&left_packet);
-            let right_elems = get_outer_elements(&right_packet);
+            let left_packet: String = chunk.get(0).expect("no packet on left!").to_string();
+            let right_packet: String = chunk.get(1).expect("no packet on right!").to_string();
 
-            let mut item_to_compare = 0;
-            let mut conclusion_reached = false;
-            loop {
-                let left_item = left_elems.get(&item_to_compare);
+            let left_tree = parse_tree(&left_packet);
+            let right_tree = parse_tree(&right_packet);
 
-                let right_item = right_elems.get(&item_to_compare);
+            let mut leftstr = String::new();
+            left_tree
+                .clone()
+                .write_formatted(&mut leftstr)
+                .expect("cannot format tree");
+            println!("left tree is \n{}", leftstr);
+            let mut rightstr = String::new();
+            right_tree
+                .clone()
+                .write_formatted(&mut rightstr)
+                .expect("cannot format tree");
+            println!("right tree is \n{}", rightstr);
 
-                match (left_item, right_item) {
-                    (Some(mut leftval), Some(mut rightval)) => {
-                        let check = trim_test(&mut leftval, &mut rightval);
-                        if check.is_some() {
-                            conclusion_reached = true;
-                            break;
-                        }
-                    }
-                    (Some(leftval), None) => {
-                        //right side has run out of items!
-                        conclusion_reached = true;
-                        break;
-                    }
-                    (None, Some(rightval)) => {
-                        //right side has run out items!
-                        conclusion_reached = true;
-                        break;
-                    }
-                    (None, None) => {
-                        break;
-                    }
+            let result = test(left_tree, right_tree);
+            println!("result is {:?}", result);
+
+            match result {
+                Order::Correct(..) => {
+                    println!("found correct ordering at count {}", pair_id + 1);
+                    return Some(pair_id + 1);
+                }
+                _ => {
+                    return None;
                 }
             }
+        })
+        .sum();
 
-            println!("left elems are:");
-            dbg!(left_elems);
-
-            println!("right elems are:");
-            dbg!(right_elems);
-        } else {
-            return Err("packets must occur in pairs".into());
-        };
-    }
+    println!("");
+    println!("--------------------------------");
+    println!("sum of right pair ids is : {}", right_pair_ids);
 
     Ok(())
 }

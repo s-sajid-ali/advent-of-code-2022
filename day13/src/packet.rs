@@ -4,141 +4,85 @@ const RIGHTBRACE: char = ']';
 pub mod parse {
 
     use crate::packet::{LEFTBRACE, RIGHTBRACE};
-    use std::collections::HashMap;
+    use id_tree::InsertBehavior::*;
+    use id_tree::*;
 
-    pub fn trim_packet(line: &str) -> Option<String> {
-        let message: String = line.to_string();
-        //println!("trimming is being attempted on message {}", message);
+    pub fn parse_tree(line: &str) -> Tree<i32> {
+        let mut tree: Tree<i32> = TreeBuilder::new().with_node_capacity(5).build();
+        // let -3 represent the root node
+        let root_id: NodeId = tree.insert(Node::new(-3), AsRoot).unwrap();
+        //        let mut curr = Curr {
+        //            nodeid: root_id,
+        //            parentval: -3,
+        //        };
+        let mut curr = root_id;
 
-        // first trim the braces at the ends
-        if (message.chars().next() == Some(LEFTBRACE))
-            && (message.chars().rev().next() == Some(RIGHTBRACE))
-        {
-            let (_, str1) = message.split_at(1);
-            let (result, _) = str1.split_at(str1.len() - 1);
-            let leftbracelocs: Vec<_> = result.match_indices('[').collect();
-            let rightbracelocs: Vec<_> = result.match_indices(']').collect();
-            // the following is just to assert that the packet message
-            // is well formed!
-            assert_eq!(
-                leftbracelocs.len(),
-                rightbracelocs.len(),
-                "ill formed packet message!"
-            );
-            for i in 0..rightbracelocs.len() {
-                if leftbracelocs
-                    .get(i)
-                    .expect("missing location for left brace!")
-                    > rightbracelocs
-                        .get(i)
-                        .expect("missing location for right brace!")
-                {
-                    return None;
+        let mut input = line.chars();
+        let mut val_str = String::new();
+        let mut outer: bool = true;
+        while let Some(in_char) = input.next() {
+            //println!("in_char is : {}", in_char);
+            match in_char {
+                LEFTBRACE => {
+                    let mut val = -1;
+                    if outer {
+                        val = -2;
+                        outer = false;
+                    }
+                    // let -1 represent a [] layer
+                    curr = tree
+                        .insert(Node::new(val), InsertBehavior::UnderNode(&curr))
+                        .unwrap();
+                    continue;
                 }
-            }
-            //println!("trimming succesful, message is {}", str2);
-            return Some(result.to_string());
-        }
-        None
-    }
-
-    pub fn get_outer_elements(input: &str) -> HashMap<usize, String> {
-        let leftbracelocs: Vec<_> = input.match_indices('[').collect();
-        let rightbracelocs: Vec<_> = input.match_indices(']').collect();
-
-        // the following is just to assert that the packet message
-        // is well formed!
-        assert_eq!(
-            leftbracelocs.len(),
-            rightbracelocs.len(),
-            "ill formed packet message!"
-        );
-
-        let numbracepairs = leftbracelocs.len();
-
-        /*
-        for elem in input.char_indices() {
-            println!("elem at {} is {}", elem.0, elem.1);
-        }
-        for i in 0..rightbracelocs.len() {
-            println!(
-                "brace pair at : {}, {}",
-                leftbracelocs[i].0, rightbracelocs[i].0
-            );
-        }*/
-
-        let commalocs: Vec<_> = input.match_indices(',').collect();
-
-        let locs: Vec<usize> = commalocs
-            .iter()
-            .filter_map(|loc| {
-                let test: usize = leftbracelocs
-                    .iter()
-                    .zip(rightbracelocs.iter())
-                    .map(|(leftloc, rightloc)| {
-                        if (loc.0 > leftloc.0) && (loc.0 < rightloc.0) {
-                            0
-                        } else {
-                            1
+                RIGHTBRACE => {
+                    if let Ok(elem) = val_str.trim().parse::<i32>() {
+                        // there will always be a parentval for a well formed
+                        // packet!
+                        let parentval = *tree
+                            .get(&tree.get(&curr).unwrap().parent().unwrap().clone())
+                            .unwrap()
+                            .data();
+                        if parentval == -3 {
+                            curr = tree
+                                .insert(Node::new(-1), InsertBehavior::UnderNode(&curr))
+                                .unwrap();
                         }
-                    })
-                    .sum();
-                if test == numbracepairs {
-                    Some(loc.0)
-                } else {
-                    None
+                        tree.insert(Node::new(elem), InsertBehavior::UnderNode(&curr))
+                            .unwrap();
+                        val_str.clear();
+                    }
+                    curr = tree.get(&curr).unwrap().parent().unwrap().clone();
+                    continue;
                 }
-            })
-            .collect();
-        //println!("found {} locs!", locs.len());
-
-        let mut outer_elems: HashMap<usize, String> = HashMap::new();
-        if numbracepairs == 0 {
-            let elems: Vec<_> = input.split(",").collect();
-            let mut i: usize = 0;
-            for elem in elems {
-                outer_elems.insert(i, elem.to_string());
-                i += 1;
-            }
-            return outer_elems;
-        }
-
-        for i in 0..=locs.len() {
-            if i == 0 {
-                let (str1, _) = input.split_at(locs[0]);
-                /*
-                println!(
-                    "i is 0, loc is at {}, string to insert is {}",
-                    locs[0], str1
-                );*/
-                outer_elems.insert(i, str1.to_string());
-            } else if i == locs.len() {
-                let (_, str1) = input.split_at(locs[i - 1] + 1);
-                let (str2, _) = str1.split_at(input.len() - locs[i - 1] - 1);
-                /*
-                println!(
-                    "last i is {}, loc is at {}, string to insert is {}",
-                    i,
-                    locs[i - 1],
-                    str2
-                );*/
-                outer_elems.insert(i, str2.to_string());
-            } else {
-                let (_, str1) = input.split_at(locs[i - 1] + 1);
-                let (str2, _) = str1.split_at(locs[i] - locs[i - 1] - 1);
-                /*
-                println!(
-                    "i is {}, loc is at {}, previous loc is at {}, str1 is {}, string to insert is {}",
-                    i,
-                    locs[i],
-                    locs[i - 1],
-                    str1,
-                    str2
-                );*/
-                outer_elems.insert(i, str2.to_string());
+                ',' => {
+                    if let Ok(elem) = val_str.trim().parse::<i32>() {
+                        let parentval = *tree
+                            .get(&tree.get(&curr).unwrap().parent().unwrap().clone())
+                            .unwrap()
+                            .data();
+                        if parentval == -3 {
+                            curr = tree
+                                .insert(Node::new(-1), InsertBehavior::UnderNode(&curr))
+                                .unwrap();
+                            tree.insert(Node::new(elem), InsertBehavior::UnderNode(&curr))
+                                .unwrap();
+                            val_str.clear();
+                            curr = tree.get(&curr).unwrap().parent().unwrap().clone();
+                        } else {
+                            tree.insert(Node::new(elem), InsertBehavior::UnderNode(&curr))
+                                .unwrap();
+                            val_str.clear();
+                        }
+                    }
+                    continue;
+                }
+                _ => {
+                    val_str.push(in_char);
+                }
             }
         }
 
-        outer_elems
+        tree
     }
 }
