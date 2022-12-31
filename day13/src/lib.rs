@@ -1,103 +1,151 @@
 use fs_err as fs;
-use id_tree::*;
 use std::error::Error;
 
 mod packet;
-use crate::packet::parse::parse_tree;
+use crate::packet::parse::{Correct, Incorrect, Order};
+use crate::packet::{LEFTBRACE, RIGHTBRACE};
 
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum Correct {
-    LeftSideRanOutItems,
-    LeftSideIsSmaller,
-}
+pub fn test(left_packet: &str, right_packet: &str) -> Order {
+    let mut advance_left = true;
+    let mut advance_right = true;
+    let mut left_elem: Option<char> = None;
+    let mut right_elem: Option<char> = None;
 
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum Incorrect {
-    RightSideRanOutItems,
-    RightSideIsSmaller,
-}
+    let mut left: Option<i32> = None;
+    let mut right: Option<i32> = None;
+    let mut left_depth: i32 = 0;
+    let mut right_depth: i32 = 0;
 
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum Order {
-    Correct(Correct),
-    Incorrect(Incorrect),
-}
+    let mut transition_left = false;
+    let mut transition_right = false;
 
-pub fn test(left_tree: Tree<i32>, right_tree: Tree<i32>) -> Order {
-    let left_root = left_tree
-        .root_node_id()
-        .expect("left packet tree has no root!");
-    let right_root = right_tree
-        .root_node_id()
-        .expect("right packet tree has no root!");
-
-    let mut left_iter = left_tree.traverse_pre_order(&left_root).unwrap();
-    let mut right_iter = right_tree.traverse_pre_order(&right_root).unwrap();
+    let mut left_iter = left_packet.chars().peekable();
+    let mut right_iter = right_packet.chars().peekable();
 
     loop {
-        let left_elem = left_iter.next();
-        let right_elem = right_iter.next();
+        if advance_left {
+            left_elem = left_iter.next();
+        }
+        if advance_right {
+            right_elem = right_iter.next();
+        }
 
         match (left_elem, right_elem) {
-            (Some(left_node), Some(right_node)) => {
-                let left_val = *left_node.data();
-                let right_val = *right_node.data();
-
-                if left_val == -3 && right_val == -3 {
-                    // at root nodes, skip this comparision
-                    continue;
+            (Some(left_val), Some(right_val)) => {
+                // try to see if they are numbers
+                if left_val.is_digit(10) {
+                    let mut left_str = String::new();
+                    left_str.push(left_val);
+                    if left_iter.peek().is_some() {
+                        if left_iter.peek().unwrap().is_digit(10) {
+                            left_str.push(*left_iter.peek().unwrap());
+                        }
+                    }
+                    left = Some(left_str.parse::<i32>().expect("non-numeric input!"));
                 }
-
-                let left_parent_is_root =
-                    *left_tree.get(&left_node.parent().unwrap()).unwrap().data() == -2;
-                let right_parent_is_root = *right_tree
-                    .get(&right_node.parent().unwrap())
-                    .unwrap()
-                    .data()
-                    == -2;
-                println!(
-                    "comparing pair : {}/{}, parents are roots: {}/{}",
-                    left_val, right_val, left_parent_is_root, right_parent_is_root
-                );
-
-                match (left_parent_is_root, right_parent_is_root) {
-                    (true, false) => {
-                        return Order::Correct(Correct::LeftSideRanOutItems);
-                    }
-                    (false, true) => {
-                        return Order::Incorrect(Incorrect::RightSideRanOutItems);
-                    }
-                    _ => {
-                        if left_val == -1 && right_val != -1 {
-                            return Order::Correct(Correct::LeftSideRanOutItems);
+                if right_val.is_digit(10) {
+                    let mut right_str = String::new();
+                    right_str.push(right_val);
+                    if right_iter.peek().is_some() {
+                        if right_iter.peek().unwrap().is_digit(10) {
+                            right_str.push(*right_iter.peek().unwrap());
                         }
-                        if left_val != -1 && right_val == -1 {
-                            return Order::Incorrect(Incorrect::RightSideRanOutItems);
-                        }
-                        if left_val < right_val {
+                    }
+                    right = Some(right_str.parse::<i32>().expect("non-numeric input!"));
+                }
+                match (left, right) {
+                    // both are numbers, compare them
+                    (Some(lnum), Some(rnum)) => {
+                        println!("comapring number pair {}/{}", lnum, rnum);
+
+                        if lnum < rnum {
                             return Order::Correct(Correct::LeftSideIsSmaller);
                         }
-
-                        if left_val > right_val {
+                        if rnum < lnum {
                             return Order::Incorrect(Incorrect::RightSideIsSmaller);
                         }
+                        if lnum == rnum {
+                            left = None;
+                            right = None;
+                            advance_left = true;
+                            advance_right = true;
+                        }
                     }
+                    (Some(_), None) => {
+                        advance_left = false;
+                        advance_right = true;
+                        if transition_right {
+                            return Order::Incorrect(Incorrect::RightSideRanOutItems);
+                        }
+                    }
+                    (None, Some(_)) => {
+                        advance_left = true;
+                        advance_right = false;
+                        if transition_left {
+                            return Order::Correct(Correct::LeftSideRanOutItems);
+                        }
+                    }
+                    _ => {}
                 }
+
+                if left_val == LEFTBRACE {
+                    left_depth += 1;
+                    transition_left = false;
+                }
+                if left_val == RIGHTBRACE {
+                    left_depth -= 1;
+                    transition_left = true;
+                }
+                if right_val == LEFTBRACE {
+                    right_depth += 1;
+                    transition_right = false;
+                }
+                if right_val == RIGHTBRACE {
+                    right_depth -= 1;
+                    transition_right = true;
+                }
+
+                println!(
+                    "reading character pair at is {}/{}; at depth difference {}; transition status {}/{}",
+                    left_val, right_val, (left_depth - right_depth), transition_left, transition_right
+                );
+
+                if left_iter.peek().is_some()
+                    && *left_iter.peek().unwrap() == ','
+                    && (left_depth - right_depth).abs() > 1
+                {
+                    return Order::Correct(Correct::LeftSideRanOutItems);
+                }
+                if right_iter.peek().is_some()
+                    && *right_iter.peek().unwrap() == ','
+                    && (left_depth - right_depth).abs() > 1
+                {
+                    return Order::Incorrect(Incorrect::RightSideRanOutItems);
+                }
+
+                if transition_left && !transition_right {
+                    return Order::Correct(Correct::LeftSideRanOutItems);
+                }
+                if !transition_left && transition_right {
+                    return Order::Incorrect(Incorrect::RightSideRanOutItems);
+                }
+
+                continue;
             }
 
             (Some(_), None) => {
                 return Order::Incorrect(Incorrect::RightSideRanOutItems);
             }
-
             (None, Some(_)) => {
                 return Order::Correct(Correct::LeftSideRanOutItems);
             }
-
-            (None, None) => {
-                return Order::Correct(Correct::LeftSideIsSmaller);
-            }
+            _ => {}
         }
+
+        break;
     }
+
+    return Order::Correct(Correct::LeftSideIsSmaller);
 }
 
 pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
@@ -117,24 +165,22 @@ pub fn run(filename: String) -> Result<(), Box<dyn Error>> {
 
             let left_packet: String = chunk.get(0).expect("no packet on left!").to_string();
             let right_packet: String = chunk.get(1).expect("no packet on right!").to_string();
+            /*
+            let check = trim_test(&mut left_packet, &mut right_packet);
+            if check.is_some() {
+                // check for early conclusion
+                println!(
+                    "pair-id: {}; conclusion-reached: {:?}",
+                    pair_id,
+                    check.unwrap()
+                );
+                return None;
+            }*/
 
-            let left_tree = parse_tree(&left_packet);
-            let right_tree = parse_tree(&right_packet);
+            println!("left packet is {}", left_packet);
+            println!("right packet is {}", right_packet);
 
-            let mut leftstr = String::new();
-            left_tree
-                .clone()
-                .write_formatted(&mut leftstr)
-                .expect("cannot format tree");
-            println!("left tree is \n{}", leftstr);
-            let mut rightstr = String::new();
-            right_tree
-                .clone()
-                .write_formatted(&mut rightstr)
-                .expect("cannot format tree");
-            println!("right tree is \n{}", rightstr);
-
-            let result = test(left_tree, right_tree);
+            let result = test(&left_packet, &right_packet);
             println!("result is {:?}", result);
 
             match result {
