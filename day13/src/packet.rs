@@ -7,8 +7,6 @@ pub mod parse {
     use id_tree::InsertBehavior::*;
     use id_tree::RemoveBehavior::DropChildren;
     use id_tree::*;
-    use itertools::EitherOrBoth::{Both, Left, Right};
-    use itertools::Itertools;
 
     #[derive(PartialEq, Copy, Clone, Debug)]
     pub enum Correct {
@@ -51,21 +49,29 @@ pub mod parse {
         let mut lcurr = lid.clone();
         let mut rcurr = rid.clone();
 
+        let mut lcurr_parent = lid.clone();
+        let mut rcurr_parent = rid.clone();
+
         let mut early_left: bool = false;
         let mut early_right: bool = false;
-
-        let mut advance_left: bool = true;
-        let mut advance_right: bool = true;
 
         loop {
             let lcurr_width = ltree.children_ids(&lcurr).unwrap().count();
             let rcurr_width = rtree.children_ids(&rcurr).unwrap().count();
+            //println!("curr width pair is : {}/{}", lcurr_width, rcurr_width);
 
             match (lcurr_width, rcurr_width) {
-                (1, 1..) => {
+                // can't match to 0..1 as of now :(
+                (0, 2..) => {
                     early_left = true;
                 }
-                (1.., 1) => {
+                (1, 2..) => {
+                    early_left = true;
+                }
+                (2.., 0) => {
+                    early_right = true;
+                }
+                (2.., 1) => {
                     early_right = true;
                 }
                 (_, _) => {}
@@ -74,37 +80,46 @@ pub mod parse {
             let mut lchildren_ids = ltree.children_ids(&lcurr).unwrap();
             let mut rchildren_ids = rtree.children_ids(&rcurr).unwrap();
 
-            if advance_left {
-                match lchildren_ids.next() {
-                    Some(child) => {
-                        lcurr = child.clone();
-                    }
-                    None => {
-                        advance_left = false;
-                    }
+            match (lchildren_ids.next(), rchildren_ids.next()) {
+                (Some(lchild), Some(rchild)) => {
+                    lcurr_parent = lcurr.clone();
+                    rcurr_parent = rcurr.clone();
+                    lcurr = lchild.clone();
+                    rcurr = rchild.clone();
                 }
-            }
 
-            if advance_right {
-                match rchildren_ids.next() {
-                    Some(child) => {
-                        rcurr = child.clone();
-                    }
-                    None => {
-                        advance_right = false;
+                (Some(lchild), None) => {
+                    if rtree.get(&rcurr).unwrap().data().clone() != -1 {
+                        lcurr_parent = lcurr.clone();
+                        lcurr = lchild.clone();
+                        continue;
+                    } else {
+                        return Some(Order::Incorrect(Incorrect::RightSideRanOutItems));
                     }
                 }
-            }
-            if !advance_left && !advance_right {
-                break;
+                (None, Some(rchild)) => {
+                    if ltree.get(&lcurr).unwrap().data().clone() != -1 {
+                        rcurr_parent = rcurr.clone();
+                        rcurr = rchild.clone();
+                        continue;
+                    } else {
+                        return Some(Order::Correct(Correct::LeftSideRanOutItems));
+                    }
+                }
+                (None, None) => {
+                    break;
+                }
             }
         }
 
         let lval = ltree.get(&lcurr).unwrap().data().clone();
         let rval = rtree.get(&rcurr).unwrap().data().clone();
 
-        _ = ltree.remove_node(lcurr, DropChildren).unwrap();
-        _ = rtree.remove_node(rcurr, DropChildren).unwrap();
+        /*
+        println!(
+            "found val pair {}/{} with early status {}/{}",
+            lval, rval, early_left, early_right
+        );*/
 
         if lval == rval {
             if early_left {
@@ -123,41 +138,38 @@ pub mod parse {
             return Some(Order::Incorrect(Incorrect::RightSideRanOutItems));
         }
 
-        return compare_vals(lval, rval);
-    }
+        let result = compare_vals(lval, rval);
+        match result {
+            Some(conclusion) => {
+                return Some(conclusion);
+            }
+            None => {
+                let valid_left = lcurr.clone() == lcurr_parent.clone();
+                let valid_right = rcurr.clone() == rcurr_parent.clone();
+                _ = ltree.remove_node(lcurr, DropChildren).unwrap();
+                _ = rtree.remove_node(rcurr, DropChildren).unwrap();
 
-    pub fn get_value(tree: &mut Tree<i32>, id: &NodeId) -> Option<i32> {
-        let mut curr = id.clone();
-        let mut width: Vec<usize> = Vec::new();
+                /*
+                println!(
+                    "at packet.rs no conclusion reached, with pair {}/{}",
+                    valid_left, valid_right
+                );*/
 
-        loop {
-            let curr_width = tree.children_ids(&curr).unwrap().count();
-            let mut children_ids = tree.children_ids(&curr).unwrap();
-            match children_ids.next() {
-                Some(child) => {
-                    width.push(curr_width);
-                    curr = child.clone();
-                }
-                None => {
-                    break;
+                match (valid_left, valid_right) {
+                    (true, true) => {
+                        return None;
+                    }
+                    (false, false) => compare(ltree, &lcurr_parent, rtree, &rcurr_parent),
+
+                    (false, true) => {
+                        return Some(Order::Correct(Correct::LeftSideRanOutItems));
+                    }
+                    (true, false) => {
+                        return Some(Order::Incorrect(Incorrect::RightSideRanOutItems));
+                    }
                 }
             }
         }
-
-        let mut retval: Option<i32> = None;
-        let val = tree.get(&curr).unwrap().data();
-        if *val != -1 {
-            retval = Some(*val);
-        }
-        println!("elem {}, widths are", *val);
-        for w in width {
-            print!("{}, ", w);
-        }
-        println!("");
-
-        _ = tree.remove_node(curr, DropChildren).unwrap();
-
-        retval
     }
 
     pub fn parse_tree(line: &str) -> Tree<i32> {
