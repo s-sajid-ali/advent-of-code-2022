@@ -8,5 +8,7 @@ edition = "2021"
 [dependencies]
 fs-err = "2.9.0"
 petgraph = "0.6"
-nom = "7.1"
+nom = { version = "7.1", features = ["alloc"] }
+itertools = "0.10"
 clap = { version = "4.1", features = ["derive"] }
+hashbrown = "0.13"
