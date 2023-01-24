@@ -111,8 +111,13 @@ pub mod network {
 
     pub struct Network {
         graph: Graph<Valve, u32>,
+        start_valve: Valve,
         to_open: HashSet<Valve>,
         distances_among_to_open: HashMap<(Valve, Valve), u32>,
+        // let us cache subproblems of length 3;
+        // store time taken to reach valve 2 and valve 3
+        // store pressure released at valve 2 and valve 3
+        cache_sols: HashMap<[Valve; 3], [u32; 4]>,
     }
 
     impl fmt::Display for Network {
@@ -131,9 +136,6 @@ number of active valves is {}
 
     impl Network {
         pub fn pressure_release(&self) -> u32 {
-            // let us cache subproblems of length 3; store pressure released and time taken
-            //let cache_sols: HashMap<[u32; 3], [u32; 2]> = HashMap::new();
-
             let max_pressure_release = self
                 .to_open
                 .iter()
@@ -141,40 +143,92 @@ number of active valves is {}
                 .map(|order| {
                     /*println!("begin working on permutation");*/
                     // starting valve is always AA/0!
-                    let mut start: Valve = Valve {
-                        name: 1010,
-                        flow_rate: 0,
-                    };
+                    let mut start: Valve = self.start_valve;
                     let mut time_remaining: u32 = 30;
                     let mut pressure_released = 0;
 
-                    for valve_to_open in order {
-                        let distance: u32 = *self
-                            .distances_among_to_open
-                            .get(&(start, *valve_to_open))
-                            .expect("could not find distance among valves");
+                    for mut valve_pair in &order.into_iter().chunks(2) {
+                        let valve_next = valve_pair.next().unwrap();
 
-                        // extra 1 minute to open the valve!
-                        match time_remaining.checked_sub(distance + 1) {
-                            Some(time) => time_remaining = time,
-                            None => {
+                        let possible_valve_last = valve_pair.next();
+
+                        match possible_valve_last {
+                            Some(valve_last) => {
+                                let [time_used_1, time_used_2, pressure_released_1,pressure_released_2] = self
+                                    .cache_sols
+                                    .get(&[start, *valve_next, *valve_last])
+                                    .expect("could not find sub-problem in cache!");
+                                /*
                                 println!(
-                                    "pressure released in this permutation is {}",
-                                    pressure_released
-                                );
-                                return pressure_released;
+                                    "{}/{}/{} | {}/{} | {}/{}",
+                                    start.name,
+                                    valve_next.name,
+                                    valve_last.name,
+                                    time_used_1, time_used_2,
+                                    pressure_released_1, pressure_released_2
+                                );*/
+
+                                // extra 1 minute to open the valve!
+                                match time_remaining.checked_sub(*time_used_1 + 1) {
+                                    Some(time) => {time_remaining = time;
+                                        pressure_released = pressure_released + pressure_released_1*time_remaining;
+                                    },
+                                    None => {
+                                        println!(
+                                            "pressure released in this permutation is {}",
+                                            pressure_released
+                                        );
+                                        return pressure_released;
+                                    }
+                                };
+
+                                // extra 1 minute to open the valve!
+                                match time_remaining.checked_sub(*time_used_2 + 1) {
+                                    Some(time) => {time_remaining = time;
+                                        pressure_released = pressure_released + pressure_released_2*time_remaining;
+                                    },
+                                    None => {
+                                        println!(
+                                            "pressure released in this permutation is {}",
+                                            pressure_released
+                                        );
+                                        return pressure_released;
+                                    }
+                                };
+
+
+                                start = *valve_last;
+                            }
+                            None => {
+                                let distance: u32 = *self
+                                    .distances_among_to_open
+                                    .get(&(start, *valve_next))
+                                    .expect("could not find distance among valves");
+
+                                // extra 1 minute to open the valve!
+                                match time_remaining.checked_sub(distance + 1) {
+                                    Some(time) => time_remaining = time,
+                                    None => {
+                                        println!(
+                                            "pressure released in this permutation is {}",
+                                            pressure_released
+                                        );
+                                        return pressure_released;
+                                    }
+                                };
+
+                                let pressure_released_here = valve_next.flow_rate;
+                                pressure_released =
+                                    pressure_released + pressure_released_here * time_remaining;
+                                /*println!(
+                                    "releasing pressure {}; with {} minutes remaining",
+                                    pressure_released_here, time_remaining
+                                );*/
+                                start = *valve_next;
                             }
                         };
-
-                        let pressure_released_here = valve_to_open.flow_rate;
-                        pressure_released =
-                            pressure_released + pressure_released_here * time_remaining;
-                        /*println!(
-                            "releasing pressure {}; with {} minutes remaining",
-                            pressure_released_here, time_remaining
-                        );*/
-                        start = *valve_to_open;
                     }
+
                     println!(
                         "pressure released in this permutation is {}",
                         pressure_released
@@ -191,6 +245,7 @@ number of active valves is {}
             let mut valve_network = Graph::<Valve, u32>::new();
             let mut to_open: HashSet<Valve> = HashSet::new();
             let mut distances_among_to_open: HashMap<(Valve, Valve), u32> = HashMap::new();
+            let mut possible_start_valve: Option<Valve> = None;
 
             // traverse through the file, adding nodes with a default weight(flow_rate) of 0
             // until the true flow_rate is found
@@ -203,7 +258,16 @@ number of active valves is {}
                     "valve:{}; flow_rate:{}",
                     this_valve.name, this_valve.flow_rate
                 );*/
-                if this_valve.flow_rate > 0 || this_valve.name == convert_name("AA".to_string()) {
+
+                if this_valve.name == convert_name("AA".to_string()) {
+                    println!(
+                        "valve to open found! name: {}; flow_rate: {}",
+                        this_valve.name, this_valve.flow_rate
+                    );
+                    to_open.insert(this_valve.clone());
+                    possible_start_valve = Some(this_valve);
+                }
+                if this_valve.flow_rate > 0 {
                     println!(
                         "valve to open found! name: {}; flow_rate: {}",
                         this_valve.name, this_valve.flow_rate
@@ -282,15 +346,97 @@ number of active valves is {}
                 );
             });
 
-            to_open.remove(&Valve {
-                name: convert_name("AA".to_string()),
-                flow_rate: 0,
+            let start_valve = possible_start_valve.expect("missing starting valve (AA)!");
+
+            // now remove AA from the to_open set
+            to_open.remove(&start_valve);
+
+            // build a cache of triplets
+            let mut cache_sols: HashMap<[Valve; 3], [u32; 4]> = HashMap::new();
+
+            println!("building cache for starting triplets");
+            // first iterate over all possible triplets with AA as the
+            // starting valve
+            to_open.iter().permutations(2).for_each(|valve_pair| {
+                let mut start: Valve = start_valve;
+                let mut time_remaining: u32 = 30;
+                let mut pressure_released: [u32; 2] = [0, 0];
+                let mut time_used: [u32; 2] = [0, 0];
+
+                for i in 0..=1 {
+                    let valve_to_open = valve_pair[i];
+
+                    let distance: u32 = *distances_among_to_open
+                        .get(&(start, *valve_to_open))
+                        .expect("could not find distance among valves");
+
+                    time_used[i] = distance;
+
+                    // extra 1 minute to open the valve!
+                    match time_remaining.checked_sub(distance + 1) {
+                        Some(time) => time_remaining = time,
+                        None => {
+                            break;
+                        }
+                    };
+                    pressure_released[i] = valve_to_open.flow_rate;
+                    start = *valve_to_open;
+                }
+
+                cache_sols.insert(
+                    [start_valve, *valve_pair[0], *valve_pair[1]],
+                    [
+                        time_used[0],
+                        time_used[1],
+                        pressure_released[0],
+                        pressure_released[1],
+                    ],
+                );
+            });
+
+            println!("building cache for all possible triplets");
+            // first iterate over all possible triplets without AA
+            to_open.iter().permutations(3).for_each(|valve_triplet| {
+                let mut start: Valve = *valve_triplet[0];
+                let mut time_remaining: u32 = 30;
+                let mut pressure_released: [u32; 2] = [0, 0];
+                let mut time_used: [u32; 2] = [0, 0];
+
+                for i in 1..=2 {
+                    let valve_to_open = valve_triplet[i];
+                    let distance: u32 = *distances_among_to_open
+                        .get(&(start, *valve_to_open))
+                        .expect("could not find distance among valves");
+                    time_used[i - 1] = distance;
+
+                    // extra 1 minute to open the valve!
+                    match time_remaining.checked_sub(distance + 1) {
+                        Some(time) => time_remaining = time,
+                        None => {
+                            break;
+                        }
+                    };
+                    pressure_released[i - 1] = valve_to_open.flow_rate;
+                    start = *valve_to_open;
+                }
+
+                cache_sols.insert(
+                    [*valve_triplet[0], *valve_triplet[1], *valve_triplet[2]],
+                    [
+                        time_used[0],
+                        time_used[1],
+                        pressure_released[0],
+                        pressure_released[1],
+                    ],
+                );
             });
 
             Some(Network {
                 graph: valve_network,
+                start_valve,
                 to_open,
                 distances_among_to_open,
+                cache_sols,
             })
         }
     }
