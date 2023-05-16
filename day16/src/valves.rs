@@ -27,7 +27,19 @@ pub mod valve {
 
     impl fmt::Display for Valve {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "{}/{}", self.name, self.flow_rate)
+            let fist_part: u32 = self.name / 100;
+            let second_part: u32 = self.name - fist_part * 100;
+            let first_char = char::from_digit(fist_part, 36)
+                .expect("could not convert digit to alphabet!")
+                .to_uppercase();
+            let second_char = char::from_digit(second_part, 36)
+                .expect("could not convert digit to alphabet!")
+                .to_uppercase();
+            write!(
+                f,
+                "{}{}/{}{}/{}",
+                fist_part, second_part, first_char, second_char, self.flow_rate
+            )
         }
     }
 }
@@ -73,6 +85,7 @@ mod parse {
                 tag("; tunnels lead to valves"),
                 tag("; tunnel leads to valve"),
             )),
+            // use separated_list1 in the future instead
             many1(alt((parser_valve_space, parser_valve_last))),
         )(s)
     }
@@ -110,17 +123,11 @@ pub mod network {
     use std::collections::{HashMap, HashSet};
     use std::fmt;
 
-    #[derive(PartialEq, Eq, Hash)]
-    pub struct Subset {
-        to_open: Vec<Valve>,
-    }
-
     pub struct Network {
         graph: Graph<Valve, u32>,
         start_valve: Valve,
         to_open: HashSet<Valve>,
         distances_among_to_open: HashMap<(Valve, Valve), u32>,
-        cache: HashMap<(Valve, Vec<Valve>), (u32, u32)>,
     }
 
     impl fmt::Display for Network {
@@ -137,41 +144,65 @@ number of active valves is {}
         }
     }
 
+    fn get_cost(traversal: Vec<Valve>) -> u32 {
+        0
+    }
+
     impl Network {
+        //https://en.wikipedia.org/wiki/Held%E2%80%93Karp_algorithm#Example[3]
+        //
+        // re-interpret the problem of finding the opening order of valves
+        // as a TSP. For example, given valves A,{B,C,D}, with A->B->C->D being
+        // the best order, we have the final pressure release as:
+        // 30 * A + (30 - dAB - 1) * B + (30 - dAB - dBC - 2) * C +
+        // (30 - dAB -dBC - dCD -3) * D
+        // = 30 * (A + B + C + D) - ( B + 2*C + 3*D
+        //                            + dAB * (B + C + D)
+        //                            + dBC * (C + D)
+        //                            + dCD * D
+        //                          )
+        // and to determine the above, we could have minized the function
+        // min{B, C, D} =  min {
+        // (path1) B + 2C + 3D + dBC * (C + D) + dCD * D
+        // (path2) B + 2D + 3C + dBD * (C + D) + dCD * C
+        // ....
         pub fn pressure_release(&self) -> u32 {
-            0
-        }
+            // cache the best travelsal path given a set of valves
+            // to traverse and a starting valve
+            let mut cache: HashMap<Vec<Valve>, u32> = HashMap::new();
 
-        pub fn solve_subproblems(&mut self) {
-            println!("filling cache by solving sub-problems of smaller size!");
+            for length in 1..self.to_open.len() {
+                println!("solving for problem of length: {}", length);
 
-            (2..self.to_open.len()).for_each(|num_valves| {
-                println!("sub-problems with {} valves being processed", num_valves);
-                let it = self.to_open.iter().combinations(num_valves);
-                for combination in it {
-                    // split each combination into a start valve and valves to open
-                    (0..combination.len()).for_each(|idx| {
-                        let start_valve = combination[idx];
-                        let mut valves_to_visit: Vec<Valve> =
-                            combination.iter().map(|f| **f).collect();
-                        valves_to_visit.remove(idx);
-                        let p1 = start_valve.flow_rate;
+                let iter_comb = self.to_open.iter().combinations(length);
 
-                        if combination.len() == 2 {
-                            let end_valve = combination[1 - idx];
-                            let p2 = end_valve.flow_rate;
-                            let term1 = p1 + p1;
-                            let dist = self
-                                .distances_among_to_open
-                                .get(&(start_valve.clone(), end_valve.clone()))
-                                .expect("missing distance between valves!");
-                            let term2 = p1 + p2 + dist * p2;
-                            self.cache
-                                .insert((*start_valve, valves_to_visit), (term1, term2));
-                        }
+                // when length = 2, there is only one path!
+                if length == 2 {
+                    iter_comb.for_each(|combination| {
+                        let this_path_subset: Vec<Valve> =
+                            combination.into_iter().copied().collect();
+                        let dist = self
+                            .distances_among_to_open
+                            .get(&(this_path_subset[0], this_path_subset[1]))
+                            .expect("did not find distance!");
+                        let press_release =
+                            this_path_subset[1].flow_rate + this_path_subset[1].flow_rate * dist;
+
+                        cache.insert(this_path_subset, press_release);
                     });
+                } else {
+                    iter_comb.for_each(|combination| {});
                 }
-            });
+
+                /*
+                let path: Vec<Valve> = iter_comb
+                    .permutations(length)
+                    .min_by_key(|perm| 0)
+                    .expect("could not find best path!");
+                    */
+            }
+
+            0
         }
 
         pub fn new(filename: String) -> Option<Network> {
@@ -179,7 +210,6 @@ number of active valves is {}
             let mut to_open: HashSet<Valve> = HashSet::new();
             let mut distances_among_to_open: HashMap<(Valve, Valve), u32> = HashMap::new();
             let mut possible_start_valve: Option<Valve> = None;
-            let cache: HashMap<(Valve, Vec<Valve>), (u32, u32)> = HashMap::new();
 
             // traverse through the file, adding nodes with a default weight(flow_rate) of 0
             // until the true flow_rate is found
@@ -188,24 +218,15 @@ number of active valves is {}
             for line in component_lines {
                 //println!("------------------------");
                 let (this_valve, tunnels) = parse_input(line).expect("could not parse input!");
-                /*println!(
-                    "valve:{}; flow_rate:{}",
-                    this_valve.name, this_valve.flow_rate
-                );*/
+                /*println!( "valve:{}; flow_rate:{}", this_valve.name, this_valve.flow_rate);*/
 
                 if this_valve.name == convert_name("AA".to_string()) {
-                    println!(
-                        "valve to open found! name: {}; flow_rate: {}",
-                        this_valve.name, this_valve.flow_rate
-                    );
+                    println!("valve to open found! details: {}", this_valve);
                     to_open.insert(this_valve.clone());
                     possible_start_valve = Some(this_valve);
                 }
                 if this_valve.flow_rate > 0 {
-                    println!(
-                        "valve to open found! name: {}; flow_rate: {}",
-                        this_valve.name, this_valve.flow_rate
-                    );
+                    println!("valve to open found! details: {}", this_valve);
                     to_open.insert(this_valve.clone());
                 }
                 let mut this_valve_nidx: Option<NodeIndex> = None;
@@ -290,7 +311,6 @@ number of active valves is {}
                 start_valve,
                 to_open,
                 distances_among_to_open,
-                cache,
             })
         }
     }
