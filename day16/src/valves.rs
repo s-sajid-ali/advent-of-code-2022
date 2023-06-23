@@ -17,6 +17,17 @@ pub mod valve {
         val
     }
 
+    // convert a u32 number to valve name
+    pub fn convert_num(num_in: u32) -> String {
+        let digi1: u32 = num_in % 100;
+        let digi2: u32 = num_in / 100;
+
+        let mut s = String::with_capacity(2);
+        s.push(char::from_digit(digi2, 36).unwrap().to_ascii_uppercase());
+        s.push(char::from_digit(digi1, 36).unwrap().to_ascii_uppercase());
+        s
+    }
+
     // Now that the name string has been mapped to
     // a u32, Valve can implement Copy!
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -112,9 +123,10 @@ pub mod network {
 
     use crate::valves::parse::parse_input;
     use crate::valves::valve::convert_name;
+    use crate::valves::valve::convert_num;
     use crate::valves::valve::Valve;
+    use bit_set::BitSet;
     use fs_err as fs;
-    //use hashbrown::{HashMap, HashSet};
     use itertools::Itertools;
     use petgraph::algo::astar;
     use petgraph::dot::Dot;
@@ -122,6 +134,17 @@ pub mod network {
     use petgraph::Graph;
     use std::collections::{HashMap, HashSet};
     use std::fmt;
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct Path {
+        elems: BitSet,
+        start_valve: Valve,
+    }
+
+    pub struct Result {
+        next: Valve,
+        cost: u32,
+    }
 
     pub struct Network {
         graph: Graph<Valve, u32>,
@@ -144,23 +167,28 @@ number of active valves is {}
         }
     }
 
-    fn get_cost(traversal: Vec<Valve>) -> u32 {
-        0
-    }
-
     impl Network {
+        fn get_valve_from_name(&self, name_in: u32) -> Valve {
+            let res = self.to_open.iter().find(|x| x.name == name_in);
+
+            match res {
+                None => panic!("requested valve not in list of valves to open!"),
+                Some(res_valve) => return *res_valve,
+            }
+        }
+
         //https://en.wikipedia.org/wiki/Held%E2%80%93Karp_algorithm#Example[3]
         //
         // re-interpret the problem of finding the opening order of valves
         // as a TSP. For example, given valves A,{B,C,D}, with A->B->C->D being
         // the best order, we have the final pressure release as:
-        // 30 * A + (30 - dAB - 1) * B + (30 - dAB - dBC - 2) * C +
-        // (30 - dAB -dBC - dCD -3) * D
-        // = 30 * (A + B + C + D) - ( B + 2*C + 3*D
-        //                            + dAB * (B + C + D)
-        //                            + dBC * (C + D)
-        //                            + dCD * D
+        // 30 * A + (30 - d'AB) * B + (30 - d'AB - d'BC) * C +
+        // (30 - d'AB -d'BC - d'CD) * D
+        // = 30 * (A + B + C + D) - ( d'AB * (B + C + D)
+        //                            + d'BC * (C + D)
+        //                            + d'CD * D
         //                          )
+        // where d'AB is just dAB + 1.
         // and to determine the above, we could have minized the function
         // min{B, C, D} =  min {
         // (path1) B + 2C + 3D + dBC * (C + D) + dCD * D
@@ -169,40 +197,349 @@ number of active valves is {}
         pub fn pressure_release(&self) -> u32 {
             // cache the best travelsal path given a set of valves
             // to traverse and a starting valve
-            let mut cache: HashMap<Vec<Valve>, u32> = HashMap::new();
+            let mut cache: HashMap<Path, Result> = HashMap::new();
 
-            for length in 1..self.to_open.len() {
+            for length in 3..(self.to_open.len() + 1) {
                 println!("solving for problem of length: {}", length);
 
-                let iter_comb = self.to_open.iter().combinations(length);
+                if length != 3 {
+                    let iter_comb = self.to_open.iter().combinations(length);
 
-                // when length = 2, there is only one path!
-                if length == 2 {
                     iter_comb.for_each(|combination| {
-                        let this_path_subset: Vec<Valve> =
-                            combination.into_iter().copied().collect();
-                        let dist = self
-                            .distances_among_to_open
-                            .get(&(this_path_subset[0], this_path_subset[1]))
-                            .expect("did not find distance!");
-                        let press_release =
-                            this_path_subset[1].flow_rate + this_path_subset[1].flow_rate * dist;
+                        let mut all_valves_in_combination = BitSet::with_capacity(length);
+                        combination.iter().for_each(|valve| {
+                            all_valves_in_combination.insert(valve.to_owned().name as usize);
+                        });
 
-                        cache.insert(this_path_subset, press_release);
+                        combination.iter().for_each(|start_valve| {
+                            let mut traversal_valves = all_valves_in_combination.clone();
+                            traversal_valves.remove(start_valve.name as usize);
+
+                            let path: Path = Path {
+                                elems: traversal_valves.clone(),
+                                start_valve: **start_valve,
+                            };
+
+                            let next = traversal_valves
+                                .clone()
+                                .iter()
+                                .min_by_key(|test_val| {
+                                    let test_valve: Valve = *(self
+                                        .to_open
+                                        .iter()
+                                        .find(|&&x| x.name == *test_val as u32)
+                                        .expect("missing valve"));
+
+                                    let next_dist = self
+                                        .distances_among_to_open
+                                        .get(&(**start_valve, test_valve))
+                                        .expect("missing distance!");
+
+                                    let mut remaining_traversal_valves = traversal_valves.clone();
+                                    remaining_traversal_valves.remove(*test_val);
+
+                                    let sum_rel: u32 =
+                                        traversal_valves.iter().fold(0, |acc, tmp| {
+                                            let val_test: Valve = *(self
+                                                .to_open
+                                                .iter()
+                                                .find(|&&x| x.name == tmp as u32)
+                                                .expect("missing valve"));
+                                            acc + val_test.flow_rate
+                                        });
+
+                                    let remaining_path: Path = Path {
+                                        elems: remaining_traversal_valves,
+                                        start_valve: test_valve,
+                                    };
+
+                                    let res: &Result =
+                                        cache.get(&(remaining_path)).expect("cache missing path!");
+
+                                    ((next_dist + 1) * sum_rel) + res.cost
+                                })
+                                .expect("cannot find next valve to traverse to!");
+
+                            let next_valve: Valve = *(self
+                                .to_open
+                                .iter()
+                                .find(|&&x| x.name == next as u32)
+                                .expect("missing valve"));
+
+                            let next_dist = self
+                                .distances_among_to_open
+                                .get(&(**start_valve, next_valve))
+                                .expect("missing distance!");
+
+                            let sum_rel: u32 = traversal_valves.iter().fold(0, |acc, tmp| {
+                                let val_test: Valve = *(self
+                                    .to_open
+                                    .iter()
+                                    .find(|&&x| x.name == tmp as u32)
+                                    .expect("missing valve"));
+
+                                acc + val_test.flow_rate
+                            });
+
+                            let mut remaining_traversal_valves = traversal_valves.clone();
+                            remaining_traversal_valves.remove(next_valve.name as usize);
+
+                            let remaining_path: Path = Path {
+                                elems: remaining_traversal_valves,
+                                start_valve: next_valve,
+                            };
+
+                            let res: &Result =
+                                cache.get(&(remaining_path)).expect("cache missing path!");
+
+                            let next_res: Result = Result {
+                                next: next_valve,
+                                cost: ((*next_dist + 1) * sum_rel) + res.cost,
+                            };
+                            cache.insert(path, next_res);
+                        });
                     });
                 } else {
-                    iter_comb.for_each(|combination| {});
-                }
+                    let iter_comb = self.to_open.iter().combinations(length);
 
-                /*
-                let path: Vec<Valve> = iter_comb
-                    .permutations(length)
-                    .min_by_key(|perm| 0)
-                    .expect("could not find best path!");
-                    */
+                    iter_comb.for_each(|combination| {
+                        let mut all_valves_in_combination = BitSet::with_capacity(length);
+                        combination.iter().for_each(|valve| {
+                            all_valves_in_combination.insert(valve.to_owned().name as usize);
+                        });
+
+                        combination.iter().for_each(|start_valve| {
+                            let mut traversal_valves = all_valves_in_combination.clone();
+                            traversal_valves.remove(start_valve.name as usize);
+
+                            let path: Path = Path {
+                                elems: traversal_valves.clone(),
+                                start_valve: **start_valve,
+                            };
+
+                            // since this is for length3, let's explicitly calcuate the cost
+                            // of the two possibilities
+                            assert_eq!(traversal_valves.len(), 2);
+                            let bitvec = traversal_valves.clone().iter().collect_vec();
+                            let v1 = bitvec
+                                .get(0)
+                                .expect("empty bit vec found, when expecting 2 elements!");
+                            let v2 = bitvec
+                                .get(1)
+                                .expect("empty bit vec found, when expecting 2 elements!");
+
+                            let val1: Valve = *(self
+                                .to_open
+                                .iter()
+                                .find(|&&x| x.name == *v1 as u32)
+                                .expect("missing valve"));
+                            let val2: Valve = *(self
+                                .to_open
+                                .iter()
+                                .find(|&&x| x.name == *v2 as u32)
+                                .expect("missing valve"));
+
+                            let dist11: u32 = *(self
+                                .distances_among_to_open
+                                .get(&(**start_valve, val1))
+                                .expect("missing distance pair!"));
+
+                            let dist12: u32 = *(self
+                                .distances_among_to_open
+                                .get(&(val1, val2))
+                                .expect("missing distance pair!"));
+
+                            let dist21: u32 = *(self
+                                .distances_among_to_open
+                                .get(&(**start_valve, val2))
+                                .expect("missing distance pair!"));
+                            let dist22: u32 = *(self
+                                .distances_among_to_open
+                                .get(&(val2, val1))
+                                .expect("missing distance pair!"));
+
+                            let cost1 = (dist11 + 1) * val1.flow_rate
+                                + (dist11 + dist12 + 2) * val2.flow_rate;
+                            let cost2 = (dist21 + 1) * val2.flow_rate
+                                + (dist21 + dist22 + 2) * val1.flow_rate;
+
+                            if cost1 < cost2 {
+                                let res1: Result = Result {
+                                    next: val1,
+                                    cost: cost1,
+                                };
+                                cache.insert(path, res1);
+                            } else {
+                                let res2: Result = Result {
+                                    next: val2,
+                                    cost: cost2,
+                                };
+                                cache.insert(path, res2);
+                            }
+                        });
+                    })
+                }
             }
 
-            0
+            let mut valves_to_open = BitSet::with_capacity(self.to_open.len());
+            self.to_open.iter().for_each(|valve| {
+                valves_to_open.insert(valve.to_owned().name as usize);
+            });
+
+            let sum_rel: u32 = valves_to_open.iter().fold(0, |acc, tmp| {
+                let val_test: Valve = *(self
+                    .to_open
+                    .iter()
+                    .find(|&&x| x.name == tmp as u32)
+                    .expect("missing valve"));
+                acc + val_test.flow_rate
+            });
+            println!("sum-rel is {}", sum_rel);
+
+            let next = valves_to_open
+                .clone()
+                .iter()
+                .min_by_key(|test_val| {
+                    let test_valve: Valve = *(self
+                        .to_open
+                        .iter()
+                        .find(|&&x| x.name == *test_val as u32)
+                        .expect("missing valve"));
+                    let next_dist = self
+                        .distances_among_to_open
+                        .get(&(self.start_valve, test_valve))
+                        .expect("missing distance!");
+                    let mut remaining_traversal_valves = valves_to_open.clone();
+                    remaining_traversal_valves.remove(*test_val);
+
+                    let remaining_path: Path = Path {
+                        elems: remaining_traversal_valves.clone(),
+                        start_valve: test_valve,
+                    };
+
+                    let res: &Result = cache.get(&(remaining_path)).expect("cache missing path!");
+
+                    let dist = ((*next_dist + 1) * sum_rel) + res.cost;
+
+                    println!(
+                        "next-dist for test-valve {} is {}, dist is {}, res-cost is {}",
+                        convert_num(test_valve.name),
+                        next_dist,
+                        dist,
+                        res.cost
+                    );
+
+                    dist
+                })
+                .expect("cannot find next valve to traverse to!");
+
+            let next_valve: Valve = *(self
+                .to_open
+                .iter()
+                .find(|&&x| x.name == next as u32)
+                .expect("missing valve"));
+
+            let next_dist = self
+                .distances_among_to_open
+                .get(&(self.start_valve, next_valve))
+                .expect("missing distance!");
+
+            let mut press_release = 0;
+            let mut time = 30;
+
+            let mut path: Path = Path {
+                elems: valves_to_open.clone(),
+                start_valve: self.start_valve,
+            };
+
+            print!(
+                "path status: start_valve is {}, time is {}, pressure released is {}, remaining valves are:", 
+                convert_num(self.start_valve.name), time, press_release
+            );
+            for elem in &path.elems {
+                print!(" {},", convert_num(elem as u32));
+            }
+            print!("\n");
+
+            time = time - 1 - next_dist;
+
+            press_release = press_release + time * next_valve.flow_rate;
+
+            // reset search path
+            path.elems.remove(next);
+            path.start_valve = next_valve;
+
+            print!(
+                "path status: start_valve is {}, time is {}, pressure released is {}, remaining valves are:", 
+                convert_num(path.start_valve.name), time, press_release
+            );
+            for elem in &path.elems {
+                print!(" {},", convert_num(elem as u32));
+            }
+            print!("\n");
+
+            while path.elems.len() > 1 {
+                let res = cache.get(&(path)).expect("missing path from cache!");
+
+                let next_dist = self
+                    .distances_among_to_open
+                    .get(&(path.start_valve, res.next))
+                    .expect("missing distance!");
+
+                let test = time.checked_sub(next_dist + 1);
+                match test {
+                    Some(nonnegtime) => {
+                        time = nonnegtime;
+                        press_release = press_release + time * res.next.flow_rate;
+                    }
+                    None => {
+                        return press_release;
+                    }
+                }
+
+                path.elems.remove(res.next.name as usize);
+                path.start_valve = res.next;
+
+                print!(
+                "path status: start_valve is {}, time is {}, pressure released is {}, remaining valves are:", 
+                convert_num(path.start_valve.name), time, press_release
+                );
+                for elem in &path.elems {
+                    print!(" {},", convert_num(elem as u32));
+                }
+                print!("\n");
+            }
+
+            assert_eq!(path.elems.len(), 1);
+
+            let bitvec = path.elems.iter().collect_vec();
+            let lastval = bitvec
+                .get(0)
+                .expect("empty bit vec found, when expecting 2 elements!");
+
+            let lastvalve: Valve = *(self
+                .to_open
+                .iter()
+                .find(|&&x| x.name == *lastval as u32)
+                .expect("missing valve"));
+
+            let lastdist = self
+                .distances_among_to_open
+                .get(&(path.start_valve, lastvalve))
+                .expect("missing distance!");
+
+            let test = time.checked_sub(lastdist + 1);
+            match test {
+                Some(nonnegtime) => {
+                    time = nonnegtime;
+                    press_release = press_release + time * lastvalve.flow_rate;
+                }
+                None => {
+                    return press_release;
+                }
+            }
+
+            press_release
         }
 
         pub fn new(filename: String) -> Option<Network> {
